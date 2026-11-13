@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal, get_db
@@ -14,6 +14,7 @@ from app.models import User, Course, Enrollment, AuditLog, RefreshToken, Passwor
 from app.schemas import (
     RegisterIn, UserOut, TokenOut, RefreshIn, LogoutIn, ForgotPasswordIn, ResetPasswordIn,
     AdminUserCreateIn, UserRoleUpdateIn, CourseIn, CourseOut, EnrollmentIn, StatusIn, EnrollmentOut, ChatIn,
+    AuditLogOut, DashboardStatsOut,
 )
 from app.services.ai import ask_gemini
 
@@ -133,7 +134,7 @@ def create_user(payload: AdminUserCreateIn, db: Session = Depends(get_db), admin
     new_user = User(name=payload.name.strip(), email=email, password_hash=hash_password(payload.password), role=payload.role)
     db.add(new_user)
     db.flush()
-    db.add(AuditLog(actor_user_id=admin.id, action="USER_CREATE", target_type="user", target_id=new_user.id, detail=f"role={new_user.role}"))
+    db.add(AuditLog(actor_user_id=admin.id, action="USER_CREATE", resource_type="user", resource_id=str(new_user.id), details={"role": new_user.role}))
     db.commit()
     db.refresh(new_user)
     return new_user
@@ -145,10 +146,47 @@ def update_user_role(user_id: int, payload: UserRoleUpdateIn, db: Session = Depe
         raise HTTPException(404, "Usuário não encontrado")
     old_role = target.role
     target.role = payload.role
-    db.add(AuditLog(actor_user_id=admin.id, action="USER_ROLE_CHANGE", target_type="user", target_id=target.id, detail=f"{old_role}->{payload.role}"))
+    db.add(AuditLog(actor_user_id=admin.id, action="USER_ROLE_CHANGE", resource_type="user", resource_id=str(target.id), details={"from": old_role, "to": payload.role}))
     db.commit()
     db.refresh(target)
     return target
+
+@app.get("/api/v1/dashboard/stats", response_model=DashboardStatsOut)
+def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(roles("ADMIN", "SUPPORT"))):
+    total_courses = db.scalar(select(func.count()).select_from(Course)) or 0
+    total_enrollments = db.scalar(select(func.count()).select_from(Enrollment)) or 0
+    pending = db.scalar(select(func.count()).select_from(Enrollment).where(Enrollment.status == "PENDING")) or 0
+    approved = db.scalar(select(func.count()).select_from(Enrollment).where(Enrollment.status == "APPROVED")) or 0
+    rejected = db.scalar(select(func.count()).select_from(Enrollment).where(Enrollment.status == "REJECTED")) or 0
+    cancelled = db.scalar(select(func.count()).select_from(Enrollment).where(Enrollment.status == "CANCELLED")) or 0
+    total_users = db.scalar(select(func.count()).select_from(User)) if user.role == "ADMIN" else None
+    return {
+        "total_courses": total_courses,
+        "total_enrollments": total_enrollments,
+        "pending_enrollments": pending,
+        "approved_enrollments": approved,
+        "rejected_enrollments": rejected,
+        "cancelled_enrollments": cancelled,
+        "total_users": total_users,
+    }
+
+@app.get("/api/v1/audit-logs", response_model=list[AuditLogOut])
+def list_audit_logs(limit: int = 50, db: Session = Depends(get_db), user: User = Depends(roles("ADMIN", "SUPPORT"))):
+    safe_limit = min(max(limit, 1), 200)
+    return db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(safe_limit)).all()
+
+@app.get("/api/v1/enrollments/{enrollment_id}/history", response_model=list[AuditLogOut])
+def enrollment_history(enrollment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    enrollment = db.get(Enrollment, enrollment_id)
+    if not enrollment:
+        raise HTTPException(404, "Matrícula não encontrada")
+    if user.role == "STUDENT" and enrollment.student_id != user.id:
+        raise HTTPException(403, "Acesso negado")
+    return db.scalars(
+        select(AuditLog)
+        .where(AuditLog.resource_type == "enrollment", AuditLog.resource_id == str(enrollment_id))
+        .order_by(AuditLog.id.desc())
+    ).all()
 
 @app.get("/api/v1/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):

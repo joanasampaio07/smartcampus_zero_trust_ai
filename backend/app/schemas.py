@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 class RegisterIn(BaseModel):
@@ -65,3 +66,22 @@ class EnrollmentOut(BaseModel):
 
 class ChatIn(BaseModel):
     question: str = Field(min_length=3, max_length=4000)
+
+class AuditLogOut(BaseModel):
+    id: int
+    actor_user_id: int
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class DashboardStatsOut(BaseModel):
+    total_courses: int
+    total_enrollments: int
+    pending_enrollments: int
+    approved_enrollments: int
+    rejected_enrollments: int
+    cancelled_enrollments: int
+    total_users: int | None = None
