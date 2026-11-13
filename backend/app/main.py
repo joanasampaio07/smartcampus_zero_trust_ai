@@ -227,5 +227,7 @@ def update_enrollment(enrollment_id: int, payload: StatusIn, db: Session = Depen
     db.commit(); db.refresh(item); return item
 
 @app.post("/api/v1/ai/chat")
-async def chat(payload: ChatIn, user: User = Depends(current_user)):
-    return {"answer": await ask_gemini(payload.question), "provider":"gemini"}
+async def chat(payload: ChatIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    published_courses = db.scalars(select(Course.title).where(Course.is_published.is_(True)).order_by(Course.title)).all()
+    result = await ask_gemini(payload.question, list(published_courses))
+    return {**result, "provider": "gemini"}
