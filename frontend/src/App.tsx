@@ -9,6 +9,8 @@ export default function App(){
  const [user,setUser]=useState<User|null>(null),[courses,setCourses]=useState<Course[]>([]),[enrollments,setEnrollments]=useState<Enrollment[]>([]),[users,setUsers]=useState<User[]>([]);
  const [stats,setStats]=useState<Stats|null>(null),[auditLogs,setAuditLogs]=useState<AuditItem[]>([]);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[name,setName]=useState(""),[register,setRegister]=useState(false);
+ const [forgotMode,setForgotMode]=useState(false),[resetToken,setResetToken]=useState(""),[newPassword,setNewPassword]=useState("");
+ const [historyItems,setHistoryItems]=useState<{id:number;action:string;details:Record<string,unknown>;created_at:string}[]>([]);
  const [notice,setNotice]=useState(""),[title,setTitle]=useState(""),[question,setQuestion]=useState(""),[answer,setAnswer]=useState(""),[sources,setSources]=useState<string[]>([]);
  const [uName,setUName]=useState(""),[uEmail,setUEmail]=useState(""),[uPass,setUPass]=useState(""),[uRole,setURole]=useState("SUPPORT");
  const [tab,setTab]=useState<"overview"|"students"|"courses"|"enrollments"|"users"|"audit"|"ai">("overview");
