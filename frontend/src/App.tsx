@@ -1,22 +1,25 @@
 import {useEffect,useState,FormEvent} from "react";
-import {api,token,BASE} from "./api";
+import {api,token,BASE,setTokens,clearTokens,logoutApi} from "./api";
 type User={id:number;name:string;email:string;role:string};
 type Course={id:number;title:string;description:string;workload_hours:number};
 type Enrollment={id:number;student_id:number;course_id:number;status:string};
 export default function App(){
- const [user,setUser]=useState<User|null>(null),[courses,setCourses]=useState<Course[]>([]),[enrollments,setEnrollments]=useState<Enrollment[]>([]);
+ const [user,setUser]=useState<User|null>(null),[courses,setCourses]=useState<Course[]>([]),[enrollments,setEnrollments]=useState<Enrollment[]>([]),[users,setUsers]=useState<User[]>([]);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[name,setName]=useState(""),[register,setRegister]=useState(false);
  const [notice,setNotice]=useState(""),[title,setTitle]=useState(""),[question,setQuestion]=useState(""),[answer,setAnswer]=useState("");
- async function refresh(){const [c,e]=await Promise.all([api("/courses"),api("/enrollments")]);setCourses(c);setEnrollments(e);}
- useEffect(()=>{if(token())api("/auth/me").then(setUser).catch(()=>sessionStorage.removeItem("access_token"));},[]);
+ const [uName,setUName]=useState(""),[uEmail,setUEmail]=useState(""),[uPass,setUPass]=useState(""),[uRole,setURole]=useState("SUPPORT");
+ async function refresh(){const [c,e]=await Promise.all([api("/courses"),api("/enrollments")]);setCourses(c);setEnrollments(e);if(user?.role==="ADMIN")setUsers(await api("/users"));}
+ useEffect(()=>{if(token())api("/auth/me").then(setUser).catch(()=>clearTokens());},[]);
  useEffect(()=>{if(user)refresh().catch(e=>setNotice(e.message));},[user]);
  async function auth(e:FormEvent){e.preventDefault();try{
   if(register)await api("/auth/register",{method:"POST",body:JSON.stringify({name,email,password})});
   const r=await fetch(`${BASE}/auth/login`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({username:email,password})});
   if(!r.ok)throw new Error("E-mail ou senha inválidos");
-  const data=await r.json();sessionStorage.setItem("access_token",data.access_token);setUser(await api("/auth/me"));
+  const data=await r.json();setTokens(data.access_token,data.refresh_token);setUser(await api("/auth/me"));
  }catch(x){setNotice(x instanceof Error?x.message:"Falha");}}
- function logout(){sessionStorage.removeItem("access_token");setUser(null);setCourses([]);setEnrollments([]);}
+ async function logout(){await logoutApi();setUser(null);setCourses([]);setEnrollments([]);setUsers([]);}
+ async function createUser(e:FormEvent){e.preventDefault();try{await api("/users",{method:"POST",body:JSON.stringify({name:uName,email:uEmail,password:uPass,role:uRole})});setUName("");setUEmail("");setUPass("");setNotice("Usuário criado.");await refresh();}catch(x){setNotice(x instanceof Error?x.message:"Erro");}}
+ async function changeRole(id:number,role:string){try{await api(`/users/${id}/role`,{method:"PATCH",body:JSON.stringify({role})});setNotice("Perfil atualizado.");await refresh();}catch(x){setNotice(x instanceof Error?x.message:"Erro");}}
  async function enroll(id:number){try{await api("/enrollments",{method:"POST",body:JSON.stringify({course_id:id})});setNotice("Matrícula solicitada.");await refresh();}catch(x){setNotice(x instanceof Error?x.message:"Erro");}}
  async function addCourse(e:FormEvent){e.preventDefault();try{await api("/courses",{method:"POST",body:JSON.stringify({title,description:"Curso disponível no catálogo SmartCampus",workload_hours:40,is_published:true})});setTitle("");await refresh();setNotice("Curso cadastrado.");}catch(x){setNotice(x instanceof Error?x.message:"Erro");}}
  async function status(id:number,value:string){try{await api(`/enrollments/${id}/status`,{method:"PATCH",body:JSON.stringify({status:value})});await refresh();}catch(x){setNotice(x instanceof Error?x.message:"Erro");}}
@@ -27,6 +30,7 @@ export default function App(){
  <main className="content"><header><div><p className="eyebrow">SMARTCAMPUS / VISÃO GERAL</p><h1>{staff?"Painel administrativo":"Portal do aluno"}</h1></div><span className="secure">● Sessão autenticada</span></header>{notice&&<p className="notice">{notice}</p>}
  <section className="stats"><article><small>Cursos publicados</small><strong>{courses.length}</strong></article><article><small>{staff?"Matrículas":"Minhas solicitações"}</small><strong>{enrollments.length}</strong></article><article><small>Perfil</small><strong className="role">{user.role}</strong></article></section>
  {user.role==="ADMIN"&&<section className="panel"><p className="eyebrow">GESTÃO ACADÊMICA</p><h2>Cadastrar curso</h2><form className="row" onSubmit={addCourse}><input placeholder="Nome do curso" value={title} onChange={e=>setTitle(e.target.value)} required minLength={3}/><button className="primary">Adicionar</button></form></section>}
+{user.role==="ADMIN"&&<section className="panel"><p className="eyebrow">IAM & PERMISSÕES</p><h2>Usuários e perfis</h2><form className="row" onSubmit={createUser}><input placeholder="Nome" value={uName} onChange={e=>setUName(e.target.value)} required minLength={2}/><input type="email" placeholder="E-mail" value={uEmail} onChange={e=>setUEmail(e.target.value)} required/><input type="password" placeholder="Senha (12+)" value={uPass} onChange={e=>setUPass(e.target.value)} required minLength={12}/><select value={uRole} onChange={e=>setURole(e.target.value)}><option value="SUPPORT">SUPPORT</option><option value="ADMIN">ADMIN</option><option value="STUDENT">STUDENT</option></select><button className="primary">Criar usuário</button></form><table className="table"><thead><tr><th>ID</th><th>NOME</th><th>E-MAIL</th><th>PERFIL</th></tr></thead><tbody>{users.map(u=><tr key={u.id}><td>#{u.id}</td><td>{u.name}</td><td>{u.email}</td><td><select value={u.role} onChange={e=>changeRole(u.id,e.target.value)}><option value="STUDENT">STUDENT</option><option value="SUPPORT">SUPPORT</option><option value="ADMIN">ADMIN</option></select></td></tr>)}</tbody></table></section>}
  <section className="panel"><p className="eyebrow">CATÁLOGO</p><h2>Cursos disponíveis</h2><div className="grid">{courses.map(c=><article className="course" key={c.id}><span className="tag">FORMAÇÃO</span><h3>{c.title}</h3><p>{c.description}</p><div className="row between"><small>{c.workload_hours} horas</small>{!staff&&<button className="primary small" onClick={()=>enroll(c.id)}>Matricular</button>}</div></article>)}{!courses.length&&<p className="muted">Nenhum curso cadastrado ainda.</p>}</div></section>
  <section className="panel"><p className="eyebrow">ACOMPANHAMENTO</p><h2>{staff?"Gestão de matrículas":"Minhas matrículas"}</h2><div className="tablewrap"><table><thead><tr><th>ID</th>{staff&&<th>Aluno</th>}<th>Curso</th><th>Status</th>{staff&&<th>Atualizar</th>}</tr></thead><tbody>{enrollments.map(x=><tr key={x.id}><td>#{x.id}</td>{staff&&<td>{x.student_id}</td>}<td>{x.course_id}</td><td>{x.status}</td>{staff&&<td><select value={x.status} onChange={e=>status(x.id,e.target.value)}><option>PENDING</option><option>APPROVED</option><option>REJECTED</option><option>CANCELLED</option></select></td>}</tr>)}</tbody></table></div></section>
  <section className="panel ai"><p className="eyebrow">GEMINI • ASSISTENTE</p><h2>Como podemos ajudar?</h2><p className="muted">A base RAG institucional será conectada na próxima fase.</p><form className="row" onSubmit={ask}><input placeholder="Digite sua pergunta..." value={question} onChange={e=>setQuestion(e.target.value)} required minLength={3}/><button className="primary">Perguntar</button></form>{answer&&<p className="answer">{answer}</p>}</section><footer>SmartCampus Zero Trust AI • Demonstração técnica</footer></main></div>;

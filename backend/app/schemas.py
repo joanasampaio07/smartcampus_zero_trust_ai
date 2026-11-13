@@ -15,7 +15,30 @@ class UserOut(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
+
+class RefreshIn(BaseModel):
+    refresh_token: str = Field(min_length=16, max_length=256)
+
+class LogoutIn(BaseModel):
+    refresh_token: str = Field(min_length=16, max_length=256)
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+    new_password: str = Field(min_length=12, max_length=128)
+
+class AdminUserCreateIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+    role: str = Field(pattern="^(ADMIN|SUPPORT|STUDENT)$")
+
+class UserRoleUpdateIn(BaseModel):
+    role: str = Field(pattern="^(ADMIN|SUPPORT|STUDENT)$")
 
 class CourseIn(BaseModel):
     title: str = Field(min_length=3, max_length=160)

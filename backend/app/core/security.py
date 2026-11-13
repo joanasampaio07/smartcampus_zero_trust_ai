@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -17,3 +19,7 @@ def decode_token(token: str):
         return data.get("sub")
     except JWTError:
         return None
+def generate_opaque_token() -> str:
+    return secrets.token_urlsafe(32)
+def hash_token(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()

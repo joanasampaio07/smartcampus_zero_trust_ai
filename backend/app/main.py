@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
@@ -6,11 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal, get_db
-from app.core.security import hash_password, verify_password, create_token
+from app.core.security import hash_password, verify_password, create_token, generate_opaque_token, hash_token
 from app.core.dependencies import current_user, roles
 from app.core.rate_limit import rate_limit
-from app.models import User, Course, Enrollment, AuditLog
-from app.schemas import RegisterIn, UserOut, TokenOut, CourseIn, CourseOut, EnrollmentIn, StatusIn, EnrollmentOut, ChatIn
+from app.models import User, Course, Enrollment, AuditLog, RefreshToken, PasswordResetToken
+from app.schemas import (
+    RegisterIn, UserOut, TokenOut, RefreshIn, LogoutIn, ForgotPasswordIn, ResetPasswordIn,
+    AdminUserCreateIn, UserRoleUpdateIn, CourseIn, CourseOut, EnrollmentIn, StatusIn, EnrollmentOut, ChatIn,
+)
 from app.services.ai import ask_gemini
 
 @asynccontextmanager
@@ -44,12 +48,107 @@ def register(payload: RegisterIn, db: Session = Depends(get_db)):
     db.add(user); db.commit(); db.refresh(user)
     return user
 
+def _issue_refresh_token(db: Session, user_id: int) -> str:
+    raw = generate_opaque_token()
+    db.add(RefreshToken(
+        user_id=user_id,
+        token_hash=hash_token(raw),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    return raw
+
 @app.post("/api/v1/auth/login", response_model=TokenOut, dependencies=[Depends(rate_limit)])
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == form.username.lower()))
     if not user or not user.is_active or not verify_password(form.password, user.password_hash):
         raise HTTPException(401, "E-mail ou senha inválidos", headers={"WWW-Authenticate":"Bearer"})
-    return {"access_token": create_token(str(user.id)), "token_type":"bearer"}
+    refresh_token = _issue_refresh_token(db, user.id)
+    db.commit()
+    return {"access_token": create_token(str(user.id)), "refresh_token": refresh_token, "token_type": "bearer"}
+
+@app.post("/api/v1/auth/refresh", response_model=TokenOut, dependencies=[Depends(rate_limit)])
+def refresh_session(payload: RefreshIn, db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    record = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_token(payload.refresh_token)))
+    if not record or record.revoked_at is not None or record.expires_at.replace(tzinfo=timezone.utc) <= now:
+        raise HTTPException(401, "Refresh token inválido ou expirado")
+    user = db.get(User, record.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(401, "Usuário inativo ou inválido")
+    record.revoked_at = now
+    new_refresh = _issue_refresh_token(db, user.id)
+    db.commit()
+    return {"access_token": create_token(str(user.id)), "refresh_token": new_refresh, "token_type": "bearer"}
+
+@app.post("/api/v1/auth/logout", status_code=204)
+def logout(payload: LogoutIn, db: Session = Depends(get_db)):
+    record = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_token(payload.refresh_token)))
+    if record and record.revoked_at is None:
+        record.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+    return None
+
+@app.post("/api/v1/auth/forgot-password", dependencies=[Depends(rate_limit)])
+def forgot_password(payload: ForgotPasswordIn, db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    reset_token = None
+    if user and user.is_active:
+        reset_token = generate_opaque_token()
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_token(reset_token),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+        ))
+        db.commit()
+    resp = {"message": "Se o e-mail estiver cadastrado, enviaremos instruções para redefinição de senha."}
+    if reset_token and settings.environment != "production":
+        resp["reset_token"] = reset_token
+    return resp
+
+@app.post("/api/v1/auth/reset-password", dependencies=[Depends(rate_limit)])
+def reset_password(payload: ResetPasswordIn, db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    record = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == hash_token(payload.token)))
+    if not record or record.used_at is not None or record.expires_at.replace(tzinfo=timezone.utc) <= now:
+        raise HTTPException(400, "Token de recuperação inválido ou expirado")
+    user = db.get(User, record.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(400, "Usuário inválido")
+    user.password_hash = hash_password(payload.new_password)
+    record.used_at = now
+    for rt in db.scalars(select(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))).all():
+        rt.revoked_at = now
+    db.commit()
+    return {"message": "Senha redefinida com sucesso."}
+
+@app.get("/api/v1/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), user: User = Depends(roles("ADMIN"))):
+    return db.scalars(select(User).order_by(User.id)).all()
+
+@app.post("/api/v1/users", response_model=UserOut, status_code=201)
+def create_user(payload: AdminUserCreateIn, db: Session = Depends(get_db), admin: User = Depends(roles("ADMIN"))):
+    email = payload.email.lower()
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(409, "E-mail já cadastrado")
+    new_user = User(name=payload.name.strip(), email=email, password_hash=hash_password(payload.password), role=payload.role)
+    db.add(new_user)
+    db.flush()
+    db.add(AuditLog(actor_user_id=admin.id, action="USER_CREATE", target_type="user", target_id=new_user.id, detail=f"role={new_user.role}"))
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+@app.patch("/api/v1/users/{user_id}/role", response_model=UserOut)
+def update_user_role(user_id: int, payload: UserRoleUpdateIn, db: Session = Depends(get_db), admin: User = Depends(roles("ADMIN"))):
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Usuário não encontrado")
+    old_role = target.role
+    target.role = payload.role
+    db.add(AuditLog(actor_user_id=admin.id, action="USER_ROLE_CHANGE", target_type="user", target_id=target.id, detail=f"{old_role}->{payload.role}"))
+    db.commit()
+    db.refresh(target)
+    return target
 
 @app.get("/api/v1/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):
