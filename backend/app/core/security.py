@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
@@ -23,3 +24,6 @@ def generate_opaque_token() -> str:
     return secrets.token_urlsafe(32)
 def hash_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def sanitize_pii_lgpd(text: str) -> str:
+    text = re.sub(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", "[CPF_MASKED]", text)
+    return re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "[EMAIL_MASKED]", text)

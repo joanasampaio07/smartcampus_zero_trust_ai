@@ -68,3 +68,11 @@ pytest -q
 Vercel: root `frontend`, build `npm run build`, output `dist`, variável `VITE_API_URL`.
 Render: root `backend`, start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
 Configure banco PostgreSQL gerenciado e variáveis secretas no painel do Render. Nunca envie `.env` ou chaves ao Git.
+
+## Arquitetura MCP (Zero Trust) & RAG em Markdown
+- **Base RAG em `.md` (`backend/docs/`):** Documentos institucionais leves e versionados (`regulamento_matriculas.md`, `guia_aluno.md`, `seguranca_suporte.md`).
+- **Servidor MCP (`backend/app/mcp_server.py`):** Atua como firewall de contexto entre a LLM e o PostgreSQL:
+  1. **Zero acesso direto ao banco:** A LLM só aciona tools tipadas (`consultar_regras_academicas`, `consultar_minhas_matriculas`, `consultar_painel_staff`, `verificar_cota_tokens`).
+  2. **Anti-IDOR & RBAC:** O `authenticated_user_id` e a `role` (`STUDENT`, `SUPPORT`, `ADMIN`) vêm da sessão JWT, nunca do prompt.
+  3. **Sanitização LGPD & Auditoria:** `sanitize_pii_lgpd` mascara CPF/e-mail e toda chamada MCP é registrada em `audit_logs`.
+- **Controle de Cota:** Limite diário de interações IA por perfil (`STUDENT`: 30, `SUPPORT`: 100, `ADMIN`: 500) + Circuit Breaker (`CLOSED` / `OPEN` / `HALF_OPEN`).
