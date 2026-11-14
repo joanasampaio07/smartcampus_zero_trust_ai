@@ -22,6 +22,13 @@ def mask_pii_in_question(question: str) -> str:
     return re.sub(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", "[EMAIL-PROTEGIDO]", question)
 
 
+def sanitize_user_input(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"(?i)(ignore instruções anteriores|ignore as instruções|modo desenvolvedor|desconsidere)", "[FILTRADO]", text)
+    return text.strip()[:2000]
+
+
 def load_markdown_docs() -> list[dict[str, str]]:
     docs: list[dict[str, str]] = []
     if not DOCS_DIR.exists():
@@ -90,7 +97,7 @@ async def ask_gemini(question: str, courses: list[str] | None = None) -> dict:
         }
 
     context_block = "\n".join(f"- [{c['source']}]: {c['content']}" for c in contexts)
-    safe_question = mask_pii_in_question(question)
+    safe_question = sanitize_user_input(mask_pii_in_question(question))
     try:
         from google import genai
         client = genai.Client(api_key=settings.gemini_api_key)
