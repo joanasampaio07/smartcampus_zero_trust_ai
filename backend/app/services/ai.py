@@ -17,6 +17,11 @@ INSTRUCTIONS = (
 )
 
 
+def mask_pii_in_question(question: str) -> str:
+    question = re.sub(r"\b(\d{3})\.?\d{3}\.?\d{3}-?(\d{2})\b", r"\1.***.***-\2", question)
+    return re.sub(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", "[EMAIL-PROTEGIDO]", question)
+
+
 def load_markdown_docs() -> list[dict[str, str]]:
     docs: list[dict[str, str]] = []
     if not DOCS_DIR.exists():
@@ -85,12 +90,13 @@ async def ask_gemini(question: str, courses: list[str] | None = None) -> dict:
         }
 
     context_block = "\n".join(f"- [{c['source']}]: {c['content']}" for c in contexts)
+    safe_question = mask_pii_in_question(question)
     try:
         from google import genai
         client = genai.Client(api_key=settings.gemini_api_key)
         response = client.models.generate_content(
             model=settings.gemini_model,
-            contents=f"{INSTRUCTIONS}\n\n<DADOS_INSTITUCIONAIS>\n{context_block}\n</DADOS_INSTITUCIONAIS>\n\nPergunta: {question[:4000]}",
+            contents=f"{INSTRUCTIONS}\n\n<DADOS_INSTITUCIONAIS>\n{context_block}\n</DADOS_INSTITUCIONAIS>\n\nPergunta: {safe_question[:4000]}",
         )
         ai_circuit_breaker.record_success()
         return {
