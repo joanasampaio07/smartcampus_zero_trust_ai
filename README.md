@@ -2,6 +2,9 @@
 
 Plataforma demonstrativa de gestão acadêmica, matrículas e atendimento inteligente.
 
+- **Aplicação online (Vercel):** https://smartcampus-zero-trust-ai.vercel.app/
+- **API (Render):** https://smartcampus-zero-trust-ai.onrender.com/docs
+
 ## Stack
 React + TypeScript + Vite | Python + FastAPI | SQLAlchemy | PostgreSQL | Redis (infra preparada) | Google Gemini | Docker Compose | Pytest.
 
